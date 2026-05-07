@@ -68,10 +68,10 @@ All SDKs are generated from the OpenAPI spec and kept in sync with each API rele
 
 | Rail | Use case |
 |---|---|
-| ACH (same-day + standard) | Bank-to-bank transfers, disbursements, payroll |
-| RTP | Instant credit push, 24/7 |
-| FedNow | Instant credit push via Federal Reserve |
-| Visa Direct / Mastercard Send | Push to debit card |
+| ACH (same-day + standard) | Pull and Push using bank accounts |
+| RTP | Instant credit push via TCH, 24/7 |
+| FedNow | Instant credit push via Federal Reserve, 24/7 |
+| Visa Direct / Mastercard Send | Pull and Push to debit card |
 | Card acceptance | Online card payments, Tap to Pay |
 | Card issuing | Virtual cards with spend controls |
 
