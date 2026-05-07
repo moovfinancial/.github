@@ -68,7 +68,7 @@ All SDKs are generated from the OpenAPI spec and kept in sync with each API rele
 
 | Rail | Use case |
 |---|---|
-| ACH (same-day + standard) | Pull and Push using bank accounts |
+| ACH (same-day + standard) | Accept and send funds using bank accounts |
 | RTP | Instant credit push via TCH, 24/7 |
 | FedNow | Instant credit push via Federal Reserve, 24/7 |
 | Visa Direct / Mastercard Send | Pull and Push to debit card |
