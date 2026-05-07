@@ -11,7 +11,7 @@
   <br />
   <a href="https://docs.moov.io"><strong>Documentation</strong></a> ·
   <a href="https://docs.moov.io/api"><strong>API Reference</strong></a> ·
-  <a href="https://dashboard.moov.io/signup"><strong>Start for free</strong></a>
+  <a href="https://dashboard.moov.io/signup"><strong>Create an account</strong></a>
 </p>
 
 ---
