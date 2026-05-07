@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://moov.io">
-    <img src="https://avatars.githubusercontent.com/u/36462486" alt="Moov" width="80" />
+    <img src="Moov-Logo.png" alt="Moov" width="80" />
   </a>
 </p>
 
