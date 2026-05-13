@@ -1,0 +1,112 @@
+name: SOD PR Monitor — CC8.1 Change Management
+
+# Triggers on any PR merged to production branches.
+# Checks whether the merge had an approving review from someone
+# other than the PR author. Sends an email alert via Gmail if not.
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - master
+      - production
+      - release/**
+
+jobs:
+  sod-check:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+
+    steps:
+      - name: Check for independent approving review
+        id: review_check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr        = context.payload.pull_request;
+            const author    = pr.user.login;
+            const prNumber  = pr.number;
+            const prTitle   = pr.title;
+            const prUrl     = pr.html_url;
+            const repo      = context.repo.repo;
+            const owner     = context.repo.owner;
+            const mergedBy  = pr.merged_by ? pr.merged_by.login : 'unknown';
+            const mergedAt  = pr.merged_at;
+            const branch    = pr.base.ref;
+
+            // Fetch all reviews for this PR
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner, repo, pull_number: prNumber
+            });
+
+            // Look for at least one APPROVED review from someone other than the author
+            const independentApproval = reviews.find(
+              r => r.state === 'APPROVED' && r.user.login !== author
+            );
+
+            // Also flag if the merger is the same as the author (self-merge)
+            const selfMerge = mergedBy === author;
+
+            if (!independentApproval || selfMerge) {
+              const issues = [];
+              if (!independentApproval) issues.push('No independent approval');
+              if (selfMerge)           issues.push('Self-merged by PR author');
+
+              // Determine SOD issue code (mirrors your existing workbook)
+              let sodCode = 'SOD-01';
+              if (selfMerge && !independentApproval) sodCode = 'SOD-02';
+              else if (selfMerge)                    sodCode = 'SOD-03';
+              else if (!independentApproval)         sodCode = 'SOD-01';
+
+              const subject = `SOD Violation — Unapproved Production Merge [${owner}/${repo} #${prNumber}]`;
+
+              const body = `
+SOD VIOLATION DETECTED — SOC 2 CC8.1 / PCI DSS Req 6.5
+========================================================
+
+Repository : ${owner}/${repo}
+Branch     : ${branch}
+PR         : #${prNumber} — ${prTitle}
+URL        : ${prUrl}
+Author     : ${author}
+Merged By  : ${mergedBy}
+Merged At  : ${mergedAt}
+
+Issue(s) Detected:
+${issues.map(i => `  - ${i}`).join('\n')}
+
+SOD Code   : ${sodCode}
+
+--------------------------------------------------------
+This alert was generated automatically by the SOD PR Monitor
+GitHub Action for audit evidence purposes (SOC 2 CC8.1,
+PCI DSS Req 6.5). No action is required if this merge was
+pre-authorized. Otherwise, please document the exception
+in Thoropass before the audit window closes.
+              `.trim();
+
+              core.setOutput('violation', 'true');
+              core.setOutput('subject', subject);
+              core.setOutput('body', body);
+            } else {
+              core.info(`PR #${prNumber} has a valid independent approval. No SOD issue.`);
+              core.setOutput('violation', 'false');
+            }
+
+      - name: Send SOD alert email via Gmail
+        if: steps.review_check.outputs.violation == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SOD_GMAIL_ADDRESS }}
+          password: ${{ secrets.SOD_GMAIL_APP_PASSWORD }}
+          to: ${{ secrets.SOD_GMAIL_ADDRESS }}
+          from: SOD PR Monitor <${{ secrets.SOD_GMAIL_ADDRESS }}>
+          subject: ${{ steps.review_check.outputs.subject }}
+          body: ${{ steps.review_check.outputs.body }}
