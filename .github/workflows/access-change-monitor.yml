@@ -1,0 +1,46 @@
+name: Weekly Access Change Monitor
+
+on:
+  schedule:
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+
+jobs:
+  scan-access-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install PyGithub
+
+      - name: Run access change scan
+        id: scan
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_SCAN_TOKEN }}
+          ORG: moovfinancial
+        run: |
+          python scripts/access_change_monitor.py
+          echo "subject=$(cat /tmp/email_subject.txt)" >> $GITHUB_OUTPUT
+
+      - name: Send email report
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SOD_GMAIL_ADDRESS }}
+          password: ${{ secrets.SOD_GMAIL_APP_PASSWORD }}
+          to: mark.drozd@moov.io
+          from: Access Monitor <${{ secrets.SOD_GMAIL_ADDRESS }}>
+          subject: ${{ steps.scan.outputs.subject }}
+          html_body: file:///tmp/email_body.html
