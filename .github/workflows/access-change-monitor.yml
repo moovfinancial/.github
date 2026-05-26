@@ -2,8 +2,8 @@ name: Weekly Access Change Monitor
 
 on:
   schedule:
-    - cron: '0 13 * * 1'
-  workflow_dispatch:
+    - cron: '0 13 * * 1'   # Every Monday 8:00 AM CT (13:00 UTC)
+  workflow_dispatch:         # Allow manual trigger for testing
 
 jobs:
   scan-access-changes:
@@ -31,6 +31,11 @@ jobs:
         run: |
           python scripts/access_change_monitor.py
           echo "subject=$(cat /tmp/email_subject.txt)" >> $GITHUB_OUTPUT
+          {
+            echo 'body<<EOF'
+            cat /tmp/email_body.html
+            echo EOF
+          } >> $GITHUB_OUTPUT
 
       - name: Send email report
         uses: dawidd6/action-send-mail@v3
@@ -43,4 +48,4 @@ jobs:
           to: mark.drozd@moov.io
           from: Access Monitor <${{ secrets.SOD_GMAIL_ADDRESS }}>
           subject: ${{ steps.scan.outputs.subject }}
-          html_body: file:///tmp/email_body.html
+          html_body: ${{ steps.scan.outputs.body }}
