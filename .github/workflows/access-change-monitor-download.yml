@@ -30,4 +30,4 @@ jobs:
           GMAIL_USER: ${{ secrets.SOD_GMAIL_ADDRESS }}
           NOTIFY_EMAIL: mark.drozd@moov.io
           ORG: moovfinancial
-        run: python .github/scripts/access_change_monitor.py
+        run: python scripts/access_change_monitor.py
