@@ -1,0 +1,33 @@
+name: Weekly Access Change Monitor
+
+on:
+  schedule:
+    - cron: '0 13 * * 1'   # Every Monday 8:00 AM CT (13:00 UTC)
+  workflow_dispatch:         # Allow manual trigger for testing
+
+jobs:
+  scan-access-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install PyGithub
+
+      - name: Run access change scan
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_SCAN_TOKEN }}
+          GMAIL_APP_PASSWORD: ${{ secrets.SOD_GMAIL_APP_PASSWORD }}
+          GMAIL_USER: ${{ secrets.SOD_GMAIL_ADDRESS }}
+          NOTIFY_EMAIL: mark.drozd@moov.io
+          ORG: moovfinancial
+        run: python .github/scripts/access_change_monitor.py
