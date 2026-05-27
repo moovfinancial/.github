@@ -24,28 +24,24 @@ jobs:
         run: pip install PyGithub
 
       - name: Run access change scan
-        id: scan
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_SCAN_TOKEN }}
           ORG: moovfinancial
-        run: |
-          python scripts/access_change_monitor.py
-          echo "subject=$(cat /tmp/email_subject.txt)" >> $GITHUB_OUTPUT
-          {
-            echo 'body<<EOF'
-            cat /tmp/email_body.html
-            echo EOF
-          } >> $GITHUB_OUTPUT
+        run: python scripts/access_change_monitor.py
+
+      - name: Read email subject
+        id: subject
+        run: echo "value=$(cat /tmp/email_subject.txt)" >> $GITHUB_OUTPUT
 
       - name: Send email report
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
+          server_port: 587
+          secure: false
           username: ${{ secrets.SOD_GMAIL_ADDRESS }}
           password: ${{ secrets.SOD_GMAIL_APP_PASSWORD }}
           to: mark.drozd@moov.io
           from: Access Monitor <${{ secrets.SOD_GMAIL_ADDRESS }}>
-          subject: ${{ steps.scan.outputs.subject }}
-          html_body: ${{ steps.scan.outputs.body }}
+          subject: ${{ steps.subject.outputs.value }}
+          html_body: file:///tmp/email_body.html
