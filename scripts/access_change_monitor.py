@@ -1,18 +1,21 @@
 """
 access_change_monitor.py
 Weekly scan of moovfinancial GitHub org for merged PRs that contain
-access-related file changes. Writes subject and plain-text body
-to GITHUB_OUTPUT for the workflow email step.
+access-related file changes. Posts findings to Slack via
+Workflow Builder webhook.
 """
 
 import os
+import json
+import requests
 from datetime import datetime, timedelta, timezone
 from github import Github
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-GH_TOKEN      = os.environ["GH_TOKEN"]
-ORG_NAME      = os.environ["ORG"]
-LOOKBACK_DAYS = 7
+GH_TOKEN          = os.environ["GH_TOKEN"]
+SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+ORG_NAME          = os.environ["ORG"]
+LOOKBACK_DAYS     = 7
 
 # ── File path patterns that indicate access provisioning ──────────────────────
 ACCESS_PATTERNS = [
@@ -104,67 +107,63 @@ def scan_org(g, org_name: str, since: datetime) -> list:
     return findings
 
 
-def build_plain_text(findings: list, since: datetime) -> str:
+def post_to_slack(message: str):
+    """POST a message to the Slack Workflow Builder webhook."""
+    payload  = {"message": message}
+    headers  = {"Content-Type": "application/json"}
+    response = requests.post(
+        SLACK_WEBHOOK_URL,
+        data=json.dumps(payload),
+        headers=headers
+    )
+    print(f"Slack response: {response.status_code} {response.text}")
+    return response.status_code == 200
+
+
+def build_message(findings: list, since: datetime) -> str:
     now_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     since_str = since.strftime("%Y-%m-%d")
 
     if not findings:
         return (
-            f"Access Change Monitor - {now_str}\n"
+            f"*Access Change Monitor — {now_str}*\n"
             f"No access-related PR changes detected in moovfinancial "
             f"between {since_str} and {now_str}."
         )
 
     lines = [
-        f"ACCESS CHANGE MONITOR - {now_str}",
-        f"{'='*60}",
-        f"{len(findings)} PR(s) merged between {since_str} and {now_str}",
+        f"*ACCESS CHANGE MONITOR — {now_str}*",
+        f"*{len(findings)} PR(s)* merged between {since_str} and {now_str} "
         f"contain access-related file changes requiring AAF review.",
         f"",
-        f"ACTION REQUIRED: For each finding below, confirm the change",
-        f"is reflected on the user's Access Authorization Form (AAF).",
-        f"If not, contact the security admin listed as 'Merged by' and",
-        f"request they update the AAF with:",
-        f"  - Date access was implemented",
-        f"  - Their name as the implementing security admin",
-        f"{'='*60}",
+        f"*Action required:* For each finding, confirm the change is reflected "
+        f"on the user's AAF. If not, contact the security admin listed as "
+        f"*Merged by* and request they update the AAF with:",
+        f"  • Date access was implemented",
+        f"  • Their name as the implementing security admin",
+        f"{'─'*50}",
     ]
 
     for f in findings:
         email_note = f" ({f['merged_by_email']})" if f["merged_by_email"] else ""
         lines += [
             f"",
-            f"PR #{f['pr_number']} - {f['pr_title']}",
-            f"Repo:     {f['repo']}",
-            f"URL:      {f['pr_url']}",
-            f"Author:   {f['author']}",
-            f"Merged by (Security Admin): {f['merged_by']}{email_note}",
-            f"Merged:   {f['merged_at']}",
-            f"Files changed:",
+            f"*PR #{f['pr_number']} — {f['pr_title']}*",
+            f"<{f['pr_url']}|View PR>",
+            f"*Repo:* {f['repo']}",
+            f"*Author:* {f['author']}",
+            f"*Merged by (Security Admin):* {f['merged_by']}{email_note}",
+            f"*Merged:* {f['merged_at']}",
+            f"*Files changed:*",
         ]
         for fl in f["files"]:
             lines.append(
-                f"  - {fl['path']} [{fl['system_hint']}] "
+                f"  • `{fl['path']}` [{fl['system_hint']}] "
                 f"({fl['status']}, +{fl['additions']}/-{fl['deletions']})"
             )
-        lines.append(f"{'-'*60}")
+        lines.append(f"{'─'*50}")
 
     return "\n".join(lines)
-
-
-def write_github_output(subject: str, body: str):
-    """Write subject and body to GITHUB_OUTPUT for use in workflow steps."""
-    github_output = os.environ.get("GITHUB_OUTPUT", "")
-    if github_output:
-        # Escape body for GitHub output - replace % with %25, newlines carefully
-        escaped_body = body.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-        with open(github_output, "a") as f:
-            f.write(f"subject={subject}\n")
-            f.write(f"body={escaped_body}\n")
-        print(f"Written to GITHUB_OUTPUT")
-    else:
-        print(f"Subject: {subject}")
-        print(f"Body:\n{body}")
 
 
 def main():
@@ -175,16 +174,14 @@ def main():
     findings = scan_org(g, ORG_NAME, since)
     print(f"Found {len(findings)} PR(s) with access-related changes.")
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    subject = (
-        f"[Access Monitor] {len(findings)} access change(s) require AAF review - {now_str}"
-        if findings else
-        f"[Access Monitor] No access changes detected - {now_str}"
-    )
+    message = build_message(findings, since)
+    success = post_to_slack(message)
 
-    body = build_plain_text(findings, since)
-    write_github_output(subject, body)
-    print("Done.")
+    if success:
+        print("Successfully posted to Slack.")
+    else:
+        print("Failed to post to Slack.")
+        exit(1)
 
 
 if __name__ == "__main__":
