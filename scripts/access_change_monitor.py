@@ -1,8 +1,8 @@
 """
 access_change_monitor.py
 Weekly scan of moovfinancial GitHub org for merged PRs that contain
-access-related file changes. Writes email subject and HTML body to
-/tmp/email_subject.txt and /tmp/email_body.html for the workflow to send.
+access-related file changes. Writes subject and plain-text body
+to GITHUB_OUTPUT for the workflow email step.
 """
 
 import os
@@ -16,28 +16,17 @@ LOOKBACK_DAYS = 7
 
 # ── File path patterns that indicate access provisioning ──────────────────────
 ACCESS_PATTERNS = [
-    # GCP IAM / Terraform
     "iam", "iam_binding", "iam_member", "iam_policy",
-    # Compute / VM access
     "google_compute", "ssh_keys", "metadata",
-    # JumpCloud
     "jumpcloud", "user_group",
-    # GitHub org / team membership
     "CODEOWNERS", "team", "members",
-    # Kubernetes RBAC
     "clusterrolebinding", "rolebinding", "serviceaccount",
-    # HashiCorp Vault
     "vault_policy", "vault_auth",
-    # Twingate
-    "twingate",
-    # Spacelift
-    "spacelift_stack",
-    # Generic access keywords
+    "twingate", "spacelift_stack",
     "access", "permission", "role", "privilege",
     "user_add", "add_user", "grant",
 ]
 
-# Systems tracked on Moov access authorization forms (AAFs)
 TRACKED_SYSTEMS = [
     "1password", "github", "gsuite", "gcp", "jumpcloud",
     "knowbe4", "postman", "slack", "linear", "gke", "vault",
@@ -59,7 +48,7 @@ def get_system_hint(file_path: str) -> str:
         return "GCP/TERRAFORM"
     if "k8s" in path_lower or "kubernetes" in path_lower:
         return "KUBERNETES"
-    return "UNKNOWN — REVIEW MANUALLY"
+    return "UNKNOWN"
 
 
 def get_merger_email(g, login: str) -> str:
@@ -81,7 +70,6 @@ def scan_org(g, org_name: str, since: datetime) -> list:
                     continue
                 if pr.merged_at < since:
                     break
-
                 access_files = []
                 try:
                     for f in pr.get_files():
@@ -95,7 +83,6 @@ def scan_org(g, org_name: str, since: datetime) -> list:
                             })
                 except Exception:
                     continue
-
                 if access_files:
                     merger       = pr.merged_by.login if pr.merged_by else "unknown"
                     merger_email = get_merger_email(g, merger)
@@ -117,92 +104,67 @@ def scan_org(g, org_name: str, since: datetime) -> list:
     return findings
 
 
-def build_html_report(findings: list, since: datetime) -> str:
+def build_plain_text(findings: list, since: datetime) -> str:
     now_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     since_str = since.strftime("%Y-%m-%d")
 
     if not findings:
-        return f"""
-        <html><body style="font-family:Arial,sans-serif;font-size:13px">
-        <h2>&#x2705; Access Change Monitor &mdash; {now_str}</h2>
-        <p>No access-related PR changes detected in <strong>moovfinancial</strong>
-        between <strong>{since_str}</strong> and <strong>{now_str}</strong>.</p>
-        <p style="color:#666">Scan covered all org repos for IAM, JumpCloud, SSH,
-        RBAC, Vault, Twingate, Compute, and GitHub membership changes.</p>
-        </body></html>
-        """
-
-    blocks = ""
-    for f in findings:
-        email_note = f"({f['merged_by_email']})" if f["merged_by_email"] else "(email not public)"
-
-        file_rows = "".join(
-            f"""<tr>
-              <td style="padding:5px 8px">{fl['path']}</td>
-              <td style="padding:5px 8px;text-align:center">{fl['status']}</td>
-              <td style="padding:5px 8px;text-align:center"><strong>{fl['system_hint']}</strong></td>
-              <td style="padding:5px 8px;text-align:center">+{fl['additions']} / -{fl['deletions']}</td>
-            </tr>"""
-            for fl in f["files"]
+        return (
+            f"Access Change Monitor - {now_str}\n"
+            f"No access-related PR changes detected in moovfinancial "
+            f"between {since_str} and {now_str}."
         )
 
-        blocks += f"""
-        <table border="1" cellpadding="0" cellspacing="0"
-               style="border-collapse:collapse;width:100%;margin-bottom:24px;font-size:13px">
-          <tr style="background:#1a1a2e;color:#fff">
-            <td colspan="4" style="padding:10px 12px">
-              <strong>
-                <a href="{f['pr_url']}" style="color:#7ec8e3;text-decoration:none">
-                  #{f['pr_number']} &mdash; {f['pr_title']}
-                </a>
-              </strong>
-            </td>
-          </tr>
-          <tr style="background:#f0f4ff">
-            <td colspan="4" style="padding:8px 12px;font-size:12px">
-              <strong>Repo:</strong> {f['repo']} &nbsp;|&nbsp;
-              <strong>PR Author:</strong> {f['author']} &nbsp;|&nbsp;
-              <strong>Merged by (Security Admin):</strong>
-                <span style="color:#c0392b">{f['merged_by']}</span> {email_note} &nbsp;|&nbsp;
-              <strong>Merged:</strong> {f['merged_at']}
-            </td>
-          </tr>
-          <tr style="background:#e8e8e8">
-            <th style="padding:6px 8px;text-align:left">File Path</th>
-            <th style="padding:6px 8px">Change Type</th>
-            <th style="padding:6px 8px">System (Inferred)</th>
-            <th style="padding:6px 8px">Lines +/-</th>
-          </tr>
-          {file_rows}
-        </table>
-        """
+    lines = [
+        f"ACCESS CHANGE MONITOR - {now_str}",
+        f"{'='*60}",
+        f"{len(findings)} PR(s) merged between {since_str} and {now_str}",
+        f"contain access-related file changes requiring AAF review.",
+        f"",
+        f"ACTION REQUIRED: For each finding below, confirm the change",
+        f"is reflected on the user's Access Authorization Form (AAF).",
+        f"If not, contact the security admin listed as 'Merged by' and",
+        f"request they update the AAF with:",
+        f"  - Date access was implemented",
+        f"  - Their name as the implementing security admin",
+        f"{'='*60}",
+    ]
 
-    return f"""
-    <html><body style="font-family:Arial,sans-serif;font-size:13px;max-width:960px">
-    <h2 style="color:#c0392b">&#x1F510; Access Change Monitor &mdash; {now_str}</h2>
-    <p><strong>{len(findings)} PR(s)</strong> merged between
-    <strong>{since_str}</strong> and <strong>{now_str}</strong>
-    contain access-related file changes requiring AAF review.</p>
-    <div style="background:#fff8e1;border-left:4px solid #f39c12;padding:12px 16px;margin-bottom:24px">
-      <strong>&#x26A0;&#xFE0F; Action required for each finding below:</strong>
-      <ol style="margin:8px 0 0 0">
-        <li>Confirm the change is reflected on the user's Access Authorization Form (AAF).</li>
-        <li>If the AAF has not been updated, contact the security admin listed under
-            <em>"Merged by"</em> and request they update the AAF with:
-          <ul>
-            <li>Date access was implemented</li>
-            <li>Their name as the implementing security admin</li>
-          </ul>
-        </li>
-      </ol>
-    </div>
-    {blocks}
-    <p style="color:#999;font-size:11px;margin-top:32px">
-      Generated by access-change-monitor.yml &middot; moovfinancial/.github &middot;
-      Lookback: {LOOKBACK_DAYS} days &middot; Run: {now_str}
-    </p>
-    </body></html>
-    """
+    for f in findings:
+        email_note = f" ({f['merged_by_email']})" if f["merged_by_email"] else ""
+        lines += [
+            f"",
+            f"PR #{f['pr_number']} - {f['pr_title']}",
+            f"Repo:     {f['repo']}",
+            f"URL:      {f['pr_url']}",
+            f"Author:   {f['author']}",
+            f"Merged by (Security Admin): {f['merged_by']}{email_note}",
+            f"Merged:   {f['merged_at']}",
+            f"Files changed:",
+        ]
+        for fl in f["files"]:
+            lines.append(
+                f"  - {fl['path']} [{fl['system_hint']}] "
+                f"({fl['status']}, +{fl['additions']}/-{fl['deletions']})"
+            )
+        lines.append(f"{'-'*60}")
+
+    return "\n".join(lines)
+
+
+def write_github_output(subject: str, body: str):
+    """Write subject and body to GITHUB_OUTPUT for use in workflow steps."""
+    github_output = os.environ.get("GITHUB_OUTPUT", "")
+    if github_output:
+        # Escape body for GitHub output - replace % with %25, newlines carefully
+        escaped_body = body.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+        with open(github_output, "a") as f:
+            f.write(f"subject={subject}\n")
+            f.write(f"body={escaped_body}\n")
+        print(f"Written to GITHUB_OUTPUT")
+    else:
+        print(f"Subject: {subject}")
+        print(f"Body:\n{body}")
 
 
 def main():
@@ -213,24 +175,16 @@ def main():
     findings = scan_org(g, ORG_NAME, since)
     print(f"Found {len(findings)} PR(s) with access-related changes.")
 
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     subject = (
-        f"[Access Monitor] {len(findings)} access change(s) require AAF review — "
-        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        f"[Access Monitor] {len(findings)} access change(s) require AAF review - {now_str}"
         if findings else
-        f"[Access Monitor] No access changes detected — "
-        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        f"[Access Monitor] No access changes detected - {now_str}"
     )
 
-    html = build_html_report(findings, since)
-
-    # Write output files for the workflow email step
-    with open("/tmp/email_subject.txt", "w") as f:
-        f.write(subject)
-    with open("/tmp/email_body.html", "w") as f:
-        f.write(html)
-
-    print(f"Subject: {subject}")
-    print("Email content written to /tmp/email_subject.txt and /tmp/email_body.html")
+    body = build_plain_text(findings, since)
+    write_github_output(subject, body)
+    print("Done.")
 
 
 if __name__ == "__main__":
