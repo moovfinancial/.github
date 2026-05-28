@@ -21,24 +21,11 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install PyGithub
+        run: pip install PyGithub requests
 
       - name: Run access change scan
-        id: scan
         env:
           GH_TOKEN: ${{ secrets.GH_ACCESS_SCAN_TOKEN }}
+          SLACK_WEBHOOK_URL: https://hooks.slack.com/triggers/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
           ORG: moovfinancial
         run: python scripts/access_change_monitor.py
-
-      - name: Send email report
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.SOD_GMAIL_ADDRESS }}
-          password: ${{ secrets.SOD_GMAIL_APP_PASSWORD }}
-          to: ${{ secrets.SOD_GMAIL_ADDRESS }}
-          from: Access Monitor <${{ secrets.SOD_GMAIL_ADDRESS }}>
-          subject: ${{ steps.scan.outputs.subject }}
-          body: ${{ steps.scan.outputs.body }}
