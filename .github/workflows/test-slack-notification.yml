@@ -1,0 +1,16 @@
+name: Test Slack Notification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-slack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send test message to Slack
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"message": "Test message from GitHub Actions - Access Change Monitor notification is working correctly."}' \
+            https://hooks.slack.com/triggers/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
