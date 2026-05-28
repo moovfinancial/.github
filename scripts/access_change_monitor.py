@@ -2,12 +2,13 @@
 access_change_monitor.py
 Weekly scan of moovfinancial GitHub org for merged PRs that contain
 access-related file changes. Posts findings to Slack via
-Workflow Builder webhook.
+Workflow Builder webhook - one message per PR.
 """
 
 import os
 import json
 import requests
+import time
 from datetime import datetime, timedelta, timezone
 from github import Github
 
@@ -107,8 +108,7 @@ def scan_org(g, org_name: str, since: datetime) -> list:
     return findings
 
 
-def post_to_slack(message: str):
-    """POST a message to the Slack Workflow Builder webhook."""
+def post_to_slack(message: str) -> bool:
     payload  = {"message": message}
     headers  = {"Content-Type": "application/json"}
     response = requests.post(
@@ -120,68 +120,57 @@ def post_to_slack(message: str):
     return response.status_code == 200
 
 
-def build_message(findings: list, since: datetime) -> str:
+def main():
+    since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
     now_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     since_str = since.strftime("%Y-%m-%d")
 
-    if not findings:
-        return (
-            f"*Access Change Monitor — {now_str}*\n"
-            f"No access-related PR changes detected in moovfinancial "
-            f"between {since_str} and {now_str}."
-        )
-
-    lines = [
-        f"*ACCESS CHANGE MONITOR — {now_str}*",
-        f"*{len(findings)} PR(s)* merged between {since_str} and {now_str} "
-        f"contain access-related file changes requiring AAF review.",
-        f"",
-        f"*Action required:* For each finding, confirm the change is reflected "
-        f"on the user's AAF. If not, contact the security admin listed as "
-        f"*Merged by* and request they update the AAF with:",
-        f"  • Date access was implemented",
-        f"  • Their name as the implementing security admin",
-        f"{'─'*50}",
-    ]
-
-    for f in findings:
-        email_note = f" ({f['merged_by_email']})" if f["merged_by_email"] else ""
-        lines += [
-            f"",
-            f"*PR #{f['pr_number']} — {f['pr_title']}*",
-            f"<{f['pr_url']}|View PR>",
-            f"*Repo:* {f['repo']}",
-            f"*Author:* {f['author']}",
-            f"*Merged by (Security Admin):* {f['merged_by']}{email_note}",
-            f"*Merged:* {f['merged_at']}",
-            f"*Files changed:*",
-        ]
-        for fl in f["files"]:
-            lines.append(
-                f"  • `{fl['path']}` [{fl['system_hint']}] "
-                f"({fl['status']}, +{fl['additions']}/-{fl['deletions']})"
-            )
-        lines.append(f"{'─'*50}")
-
-    return "\n".join(lines)
-
-
-def main():
-    since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
     print(f"Scanning {ORG_NAME} for access-related PRs merged since {since.date()}...")
 
     g        = Github(GH_TOKEN)
     findings = scan_org(g, ORG_NAME, since)
     print(f"Found {len(findings)} PR(s) with access-related changes.")
 
-    message = build_message(findings, since)
-    success = post_to_slack(message)
+    if not findings:
+        post_to_slack(
+            f"*Access Change Monitor — {now_str}*\n"
+            f"No access-related PR changes detected between "
+            f"{since_str} and {now_str}."
+        )
+        return
 
-    if success:
-        print("Successfully posted to Slack.")
-    else:
-        print("Failed to post to Slack.")
-        exit(1)
+    # ── Post summary header ───────────────────────────────────────────────────
+    post_to_slack(
+        f"*ACCESS CHANGE MONITOR — {now_str}*\n"
+        f"*{len(findings)} PR(s)* merged between {since_str} and {now_str} "
+        f"contain access-related file changes requiring AAF review.\n\n"
+        f"*Action required:* Confirm each change is reflected on the user's AAF. "
+        f"If not, contact the security admin listed as *Merged by* and request "
+        f"they update the AAF with the date access was implemented and their name."
+    )
+    time.sleep(1)
+
+    # ── Post one message per finding ──────────────────────────────────────────
+    for i, f in enumerate(findings, 1):
+        email_note = f" ({f['merged_by_email']})" if f["merged_by_email"] else ""
+        file_lines = "\n".join(
+            f"  • `{fl['path']}` [{fl['system_hint']}] "
+            f"({fl['status']}, +{fl['additions']}/-{fl['deletions']})"
+            for fl in f["files"]
+        )
+        message = (
+            f"*Finding {i} of {len(findings)}: PR #{f['pr_number']} — {f['pr_title']}*\n"
+            f"*Repo:* {f['repo']}\n"
+            f"*URL:* {f['pr_url']}\n"
+            f"*Author:* {f['author']}\n"
+            f"*Merged by (Security Admin):* {f['merged_by']}{email_note}\n"
+            f"*Merged:* {f['merged_at']}\n"
+            f"*Files changed:*\n{file_lines}"
+        )
+        post_to_slack(message)
+        time.sleep(1)
+
+    print("Done.")
 
 
 if __name__ == "__main__":
