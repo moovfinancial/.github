@@ -33,7 +33,6 @@ jobs:
             let prsToCheck = [];
 
             if (isScheduled) {
-              // Daily run — fetch PRs merged to production branches in last 24 hours
               const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
               const { data: pulls } = await github.rest.pulls.list({
                 owner: context.repo.owner,
@@ -48,7 +47,6 @@ jobs:
                 pr.merged_at && new Date(pr.merged_at) >= new Date(since)
               );
             } else {
-              // Real-time trigger — single PR
               if (context.payload.pull_request.merged) {
                 prsToCheck = [context.payload.pull_request];
               }
@@ -90,7 +88,6 @@ jobs:
               }
             }
 
-            // Build Slack message text for violations
             let violationText = '';
             if (violations.length > 0) {
               violationText = violations.map(v => [
@@ -111,7 +108,7 @@ jobs:
 
       - name: Send violations to Slack
         if: steps.review_check.outputs.violation_count > 0
-        uses: slackapi/slack-github-action@v1.26.0
+        uses: slackapi/slack-github-action@v1
         with:
           channel-id: 'C0B8P217Y0P'
           payload: |
@@ -148,4 +145,37 @@ jobs:
 
       - name: Send all-clear to Slack
         if: steps.review_check.outputs.violation_count == 0 && steps.review_check.outputs.is_scheduled == 'true'
-        uses: slackapi/slack-github-acti
+        uses: slackapi/slack-github-action@v1
+        with:
+          channel-id: 'C0B8P217Y0P'
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "SOD PR Monitor — Unapproved Production Merges"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging."
+                  }
+                },
+                {
+                  "type": "divider"
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":white_check_mark: *No violations found.* No pull requests were merged to production in the last 24 hours without an independent review or approval."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
