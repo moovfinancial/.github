@@ -1,12 +1,13 @@
 name: SOD PR Monitor — CC8.1 Change Management
 
-# Runs daily at 8am CT (13:00 UTC) and checks PRs merged to production
+# Runs daily at 7am CT (13:00 UTC) and checks PRs merged to production
 # branches in the last 24 hours. Reports unapproved merges to Slack.
 # Also triggers on any PR merge to production branches in real time.
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 13 * * *'  # 8:00 AM CT (UTC-5) / 8:00 AM CDT (UTC-6 = 14:00 UTC, adjust for DST)
+    - cron: '0 13 * * *'  # 7:00 AM CST / 8:00 AM CDT
   pull_request:
     types: [closed]
     branches:
@@ -28,7 +29,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const isScheduled = context.eventName === 'schedule';
+            const isScheduled = context.eventName === 'schedule' || context.eventName === 'workflow_dispatch';
             let prsToCheck = [];
 
             if (isScheduled) {
@@ -89,8 +90,23 @@ jobs:
               }
             }
 
+            // Build Slack message text for violations
+            let violationText = '';
+            if (violations.length > 0) {
+              violationText = violations.map(v => [
+                `*Repo:* ${v.owner}/${v.repo}`,
+                `*Branch:* ${v.branch}`,
+                `*PR:* <${v.prUrl}|#${v.prNumber} — ${v.prTitle}>`,
+                `*Author:* ${v.author}`,
+                `*Merged By:* ${v.mergedBy}`,
+                `*Merged At:* ${v.mergedAt}`,
+                `*Issue(s):* ${v.issues.join(', ')}`,
+                `*SOD Code:* ${v.sodCode}`
+              ].join('\n')).join('\n\n---\n\n');
+            }
+
             core.setOutput('violation_count', violations.length.toString());
-            core.setOutput('violations', JSON.stringify(violations));
+            core.setOutput('violation_text', violationText);
             core.setOutput('is_scheduled', isScheduled.toString());
 
       - name: Send violations to Slack
@@ -103,7 +119,10 @@ jobs:
               "blocks": [
                 {
                   "type": "header",
-                  "text": { "type": "plain_text", "text": "SOD PR Monitor — Unapproved Production Merges" }
+                  "text": {
+                    "type": "plain_text",
+                    "text": "SOD PR Monitor — Unapproved Production Merges"
+                  }
                 },
                 {
                   "type": "section",
@@ -113,10 +132,13 @@ jobs:
                   }
                 },
                 {
+                  "type": "divider"
+                },
+                {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": ${{ toJSON(steps.review_check.outputs.violations) }}
+                    "text": ${{ toJSON(steps.review_check.outputs.violation_text) }}
                   }
                 }
               ]
@@ -126,31 +148,4 @@ jobs:
 
       - name: Send all-clear to Slack
         if: steps.review_check.outputs.violation_count == 0 && steps.review_check.outputs.is_scheduled == 'true'
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          channel-id: 'C0B8P217Y0P'
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": { "type": "plain_text", "text": "SOD PR Monitor — Unapproved Production Merges" }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging."
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":white_check_mark: *No violations found.* No pull requests were merged to production in the last 24 hours without an independent review or approval."
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        uses: slackapi/slack-github-acti
