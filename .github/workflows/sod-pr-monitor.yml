@@ -1,10 +1,12 @@
 name: SOD PR Monitor — CC8.1 Change Management
 
-# Triggers on any PR merged to production branches.
-# Checks whether the merge had an approving review from someone
-# other than the PR author. Sends an email alert via Gmail if not.
+# Runs daily at 8am CT (13:00 UTC) and checks PRs merged to production
+# branches in the last 24 hours. Reports unapproved merges to Slack.
+# Also triggers on any PR merge to production branches in real time.
 
 on:
+  schedule:
+    - cron: '0 13 * * *'  # 8:00 AM CT (UTC-5) / 8:00 AM CDT (UTC-6 = 14:00 UTC, adjust for DST)
   pull_request:
     types: [closed]
     branches:
@@ -15,98 +17,140 @@ on:
 
 jobs:
   sod-check:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
 
     steps:
-      - name: Check for independent approving review
+      - name: Check for unapproved merged PRs
         id: review_check
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const pr        = context.payload.pull_request;
-            const author    = pr.user.login;
-            const prNumber  = pr.number;
-            const prTitle   = pr.title;
-            const prUrl     = pr.html_url;
-            const repo      = context.repo.repo;
-            const owner     = context.repo.owner;
-            const mergedBy  = pr.merged_by ? pr.merged_by.login : 'unknown';
-            const mergedAt  = pr.merged_at;
-            const branch    = pr.base.ref;
+            const isScheduled = context.eventName === 'schedule';
+            let prsToCheck = [];
 
-            // Fetch all reviews for this PR
-            const { data: reviews } = await github.rest.pulls.listReviews({
-              owner, repo, pull_number: prNumber
-            });
-
-            // Look for at least one APPROVED review from someone other than the author
-            const independentApproval = reviews.find(
-              r => r.state === 'APPROVED' && r.user.login !== author
-            );
-
-            // Also flag if the merger is the same as the author (self-merge)
-            const selfMerge = mergedBy === author;
-
-            if (!independentApproval || selfMerge) {
-              const issues = [];
-              if (!independentApproval) issues.push('No independent approval');
-              if (selfMerge)           issues.push('Self-merged by PR author');
-
-              // Determine SOD issue code (mirrors your existing workbook)
-              let sodCode = 'SOD-01';
-              if (selfMerge && !independentApproval) sodCode = 'SOD-02';
-              else if (selfMerge)                    sodCode = 'SOD-03';
-              else if (!independentApproval)         sodCode = 'SOD-01';
-
-              const subject = `SOD Violation — Unapproved Production Merge [${owner}/${repo} #${prNumber}]`;
-
-              const body = `
-SOD VIOLATION DETECTED — SOC 2 CC8.1 / PCI DSS Req 6.5
-========================================================
-
-Repository : ${owner}/${repo}
-Branch     : ${branch}
-PR         : #${prNumber} — ${prTitle}
-URL        : ${prUrl}
-Author     : ${author}
-Merged By  : ${mergedBy}
-Merged At  : ${mergedAt}
-
-Issue(s) Detected:
-${issues.map(i => `  - ${i}`).join('\n')}
-
-SOD Code   : ${sodCode}
-
---------------------------------------------------------
-This alert was generated automatically by the SOD PR Monitor
-GitHub Action for audit evidence purposes (SOC 2 CC8.1,
-PCI DSS Req 6.5). No action is required if this merge was
-pre-authorized. Otherwise, please document the exception
-in Thoropass before the audit window closes.
-              `.trim();
-
-              core.setOutput('violation', 'true');
-              core.setOutput('subject', subject);
-              core.setOutput('body', body);
+            if (isScheduled) {
+              // Daily run — fetch PRs merged to production branches in last 24 hours
+              const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+              const { data: pulls } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'closed',
+                base: 'main',
+                sort: 'updated',
+                direction: 'desc',
+                per_page: 50
+              });
+              prsToCheck = pulls.filter(pr =>
+                pr.merged_at && new Date(pr.merged_at) >= new Date(since)
+              );
             } else {
-              core.info(`PR #${prNumber} has a valid independent approval. No SOD issue.`);
-              core.setOutput('violation', 'false');
+              // Real-time trigger — single PR
+              if (context.payload.pull_request.merged) {
+                prsToCheck = [context.payload.pull_request];
+              }
             }
 
-      - name: Send SOD alert email via Gmail
-        if: steps.review_check.outputs.violation == 'true'
-        uses: dawidd6/action-send-mail@v3
+            const violations = [];
+
+            for (const pr of prsToCheck) {
+              const author   = pr.user.login;
+              const prNumber = pr.number;
+              const prTitle  = pr.title;
+              const prUrl    = pr.html_url;
+              const repo     = context.repo.repo;
+              const owner    = context.repo.owner;
+              const mergedBy = pr.merged_by ? pr.merged_by.login : 'unknown';
+              const mergedAt = pr.merged_at;
+              const branch   = pr.base.ref;
+
+              const { data: reviews } = await github.rest.pulls.listReviews({
+                owner, repo, pull_number: prNumber
+              });
+
+              const independentApproval = reviews.find(
+                r => r.state === 'APPROVED' && r.user.login !== author
+              );
+              const selfMerge = mergedBy === author;
+
+              if (!independentApproval || selfMerge) {
+                const issues = [];
+                if (!independentApproval) issues.push('No independent approval');
+                if (selfMerge)           issues.push('Self-merged by PR author');
+
+                let sodCode = 'SOD-01';
+                if (selfMerge && !independentApproval) sodCode = 'SOD-02';
+                else if (selfMerge)                    sodCode = 'SOD-03';
+                else if (!independentApproval)         sodCode = 'SOD-01';
+
+                violations.push({ owner, repo, branch, prNumber, prTitle, prUrl, author, mergedBy, mergedAt, issues, sodCode });
+              }
+            }
+
+            core.setOutput('violation_count', violations.length.toString());
+            core.setOutput('violations', JSON.stringify(violations));
+            core.setOutput('is_scheduled', isScheduled.toString());
+
+      - name: Send violations to Slack
+        if: steps.review_check.outputs.violation_count > 0
+        uses: slackapi/slack-github-action@v1.26.0
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.SOD_GMAIL_ADDRESS }}
-          password: ${{ secrets.SOD_GMAIL_APP_PASSWORD }}
-          to: ${{ secrets.SOD_GMAIL_ADDRESS }}
-          from: SOD PR Monitor <${{ secrets.SOD_GMAIL_ADDRESS }}>
-          subject: ${{ steps.review_check.outputs.subject }}
-          body: ${{ steps.review_check.outputs.body }}
+          channel-id: 'C0B8P217Y0P'
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": { "type": "plain_text", "text": "SOD PR Monitor — Unapproved Production Merges" }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging."
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ${{ toJSON(steps.review_check.outputs.violations) }}
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Send all-clear to Slack
+        if: steps.review_check.outputs.violation_count == 0 && steps.review_check.outputs.is_scheduled == 'true'
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          channel-id: 'C0B8P217Y0P'
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": { "type": "plain_text", "text": "SOD PR Monitor — Unapproved Production Merges" }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging."
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":white_check_mark: *No violations found.* No pull requests were merged to production in the last 24 hours without an independent review or approval."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
