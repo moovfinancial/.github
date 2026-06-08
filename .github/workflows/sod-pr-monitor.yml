@@ -108,74 +108,14 @@ jobs:
 
       - name: Send violations to Slack
         if: steps.review_check.outputs.violation_count > 0
-        uses: slackapi/slack-github-action@v1
-        with:
-          channel-id: 'C0B8P217Y0P'
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "SOD PR Monitor — Unapproved Production Merges"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging."
-                  }
-                },
-                {
-                  "type": "divider"
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ${{ toJSON(steps.review_check.outputs.violation_text) }}
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\": \"*SOD PR Monitor — Unapproved Production Merges*\n\nThis report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging.\n\n${{ steps.review_check.outputs.violation_text }}\"}" \
+          https://hooks.slack.com/triggers/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
 
       - name: Send all-clear to Slack
         if: steps.review_check.outputs.violation_count == 0 && steps.review_check.outputs.is_scheduled == 'true'
-        uses: slackapi/slack-github-action@v1
-        with:
-          channel-id: 'C0B8P217Y0P'
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "SOD PR Monitor — Unapproved Production Merges"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging."
-                  }
-                },
-                {
-                  "type": "divider"
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":white_check_mark: *No violations found.* No pull requests were merged to production in the last 24 hours without an independent review or approval."
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text": "*SOD PR Monitor — Unapproved Production Merges*\n\nThis report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging.\n\n:white_check_mark: *No violations found.* No pull requests were merged to production in the last 24 hours without an independent review or approval."}' \
+          https://hooks.slack.com/triggers/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
