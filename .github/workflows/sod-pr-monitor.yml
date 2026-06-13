@@ -3,15 +3,6 @@ name: SOD PR Monitor — CC8.1 Change Management
 # Runs daily at 7am CT (13:00 UTC) and checks PRs merged to production
 # branches in the last 24 hours. Reports unapproved merges via email.
 # Also triggers on any PR merge to production branches in real time.
-#
-# SOD Codes:
-#   SOD-01 — No independent peer approval (merged by someone other than author)
-#   SOD-02 — No independent peer approval AND self-merged by author (highest risk)
-#
-# Compliance basis: SOC 2 CC8.1 | PCI DSS Req 6.5
-# A compliant PR requires:
-#   1. An APPROVED review from a human peer (not the PR author, not a bot)
-# Note: self-merge after receiving a valid peer approval is NOT a violation.
 
 on:
   workflow_dispatch:
@@ -61,13 +52,6 @@ jobs:
               }
             }
 
-            // Helper: returns true if a GitHub user is a bot
-            const isBot = (user) =>
-              user.type === 'Bot' ||
-              user.login.endsWith('[bot]') ||
-              user.login.includes('-bot') ||
-              user.login.startsWith('bot-');
-
             const violations = [];
 
             for (const pr of prsToCheck) {
@@ -85,23 +69,22 @@ jobs:
                 owner, repo, pull_number: prNumber
               });
 
-              // A compliant PR needs at least one APPROVED review from a human
-              // who is not the PR author. Who clicked merge does not matter.
-              const hasIndependentApproval = reviews.some(
-                r => r.state === 'APPROVED' &&
-                     r.user.login !== author &&
-                     !isBot(r.user)
+              const independentApproval = reviews.find(
+                r => r.state === 'APPROVED' && r.user.login !== author
               );
+              const selfMerge = mergedBy === author;
 
-              if (!hasIndependentApproval) {
-                const selfMerge = mergedBy === author;
-                const issues = ['No independent peer approval found in GitHub'];
-                if (selfMerge) issues.push('Self-merged by PR author');
-                const sodCode = selfMerge ? 'SOD-02' : 'SOD-01';
-                violations.push({
-                  owner, repo, branch, prNumber, prTitle, prUrl,
-                  author, mergedBy, mergedAt, issues, sodCode
-                });
+              if (!independentApproval || selfMerge) {
+                const issues = [];
+                if (!independentApproval) issues.push('No independent approval');
+                if (selfMerge)           issues.push('Self-merged by PR author');
+
+                let sodCode = 'SOD-01';
+                if (selfMerge && !independentApproval) sodCode = 'SOD-02';
+                else if (selfMerge)                    sodCode = 'SOD-03';
+                else if (!independentApproval)         sodCode = 'SOD-01';
+
+                violations.push({ owner, repo, branch, prNumber, prTitle, prUrl, author, mergedBy, mergedAt, issues, sodCode });
               }
             }
 
@@ -111,17 +94,12 @@ jobs:
 
             if (violations.length > 0) {
               subjectLine = `SOD Violation — ${violations.length} Unapproved Production Merge(s) Detected — ${date}`;
-              violationText =
-                `SOD PR Monitor — Unapproved Production Merges\n` +
+              violationText = `SOD PR Monitor — Unapproved Production Merges\n` +
                 `================================================================\n\n` +
-                `This report identifies pull requests merged to a production branch in GitHub without an independent peer approval. Company policy requires all production changes to be approved by someone other than the PR author before merging.\n\n` +
-                `Self-merge after receiving a valid peer approval is NOT a violation — only PRs with no documented independent approval in GitHub appear in this report.\n\n` +
-                `SOD Codes:\n` +
-                `  SOD-01 — No peer approval; merged by someone other than the author\n` +
-                `  SOD-02 — No peer approval AND self-merged by author (highest risk)\n\n` +
-                `For each finding, take one of the following actions:\n` +
-                `  1. Obtain a retroactive peer approval on the GitHub PR before the audit window closes.\n` +
-                `  2. If the change was genuinely unreviewed — escalate to your manager and the security team immediately.\n\n` +
+                `This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging.\n\n` +
+                `If you are seeing this email, one or more PRs were merged to production without meeting this requirement. Review each finding below and take one of the following actions:\n\n` +
+                `  1. If the merge was pre-authorized verbally or out of band — document the exception in your change management system before the audit window closes.\n` +
+                `  2. If the merge was NOT authorized — escalate to your manager and the security team immediately.\n\n` +
                 `================================================================\n\n` +
                 violations.map((v, i) => [
                   `Finding ${i + 1} of ${violations.length}`,
@@ -139,11 +117,10 @@ jobs:
                 `SOC 2 CC8.1 | PCI DSS Req 6.5 | Generated by SOD PR Monitor`;
             } else {
               subjectLine = `SOD PR Monitor — No Violations Found — ${date}`;
-              violationText =
-                `SOD PR Monitor — Unapproved Production Merges\n` +
+              violationText = `SOD PR Monitor — Unapproved Production Merges\n` +
                 `================================================================\n\n` +
-                `This report identifies pull requests merged to a production branch in GitHub without an independent peer approval. Company policy requires all production changes to be approved by someone other than the PR author before merging.\n\n` +
-                `No violations found. All pull requests merged to production in the last 24 hours had an independent peer approval documented in GitHub.\n\n` +
+                `This report identifies pull requests merged to a production branch in GitHub without an independent review or approval. Company policy requires all production changes to be reviewed and approved by someone other than the author before merging.\n\n` +
+                `No violations found. All pull requests merged to production in the last 24 hours had an independent review and approval before merging.\n\n` +
                 `No action required.\n\n` +
                 `================================================================\n` +
                 `SOC 2 CC8.1 | PCI DSS Req 6.5 | Generated by SOD PR Monitor`;
